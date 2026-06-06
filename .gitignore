@@ -1,0 +1,28 @@
+# Dataset — too large for git (2.2 GB)
+datasets/LOA-5min/LOA.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Docker volumes (managed by Docker, not git)
+kafka_data/
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Trained model artifacts (large — share via other means)
+*.model
+*.pkl
+*.joblib
