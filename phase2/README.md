@@ -16,7 +16,7 @@ Then activate it by:
 py -3.11 -m venv .venv
 ```
 
-3. Now, inside the .venv enter
+3. Now, inside the .venv enter the following to install apache flink
 
 ```bash
 python -m pip install -r requirements.txt
