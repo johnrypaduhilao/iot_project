@@ -1,4 +1,4 @@
-# This phase receives `ev-telemetry` from phase 1 and creates 15 minute feature vectors for each charging station using Apache Flink. Please refer to the pdf doc for more details. 
+This phase receives `ev-telemetry` from phase 1 and creates 15 minute feature vectors for each charging station using Apache Flink. Please refer to the pdf doc for more details. 
 
 
 ## How to run
