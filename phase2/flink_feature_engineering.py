@@ -20,12 +20,11 @@ def main():
 
     table_env.get_config().get_configuration().set_string(
         "pipeline.jars",
-        f"file:///{kafka_jar_path.replace(os.sep, '/')}" )
+        f"file:///{kafka_jar_path.replace(os.sep, '/')}"
+    )
 
     # Reading raw telemetry from Phase 1 Kafka topic
-
     table_env.execute_sql("""
-                          
         CREATE TABLE ev_telemetry (
             station_id STRING,
             time_new STRING,
@@ -45,8 +44,8 @@ def main():
         )
     """)
 
-    
     # Writing feature vectors to Kafka topic "features"
+    # upsert-kafka is used because rate_of_change uses previous-window logic.
     table_env.execute_sql("""
         CREATE TABLE features (
             station_id STRING,
@@ -58,64 +57,254 @@ def main():
             hour_of_day INT,
             day_of_week INT,
             anomaly_flag INT,
-            data_completeness DOUBLE
+            data_completeness DOUBLE,
+            PRIMARY KEY (station_id, time_bin) NOT ENFORCED
+        ) WITH (
+            'connector' = 'upsert-kafka',
+            'topic' = 'features',
+            'properties.bootstrap.servers' = 'localhost:9092',
+            'key.format' = 'json',
+            'value.format' = 'json'
+        )
+    """)
+
+    # Writing anomalous records to Kafka topic "data-quality"
+    table_env.execute_sql("""
+        CREATE TABLE data_quality (
+            station_id STRING,
+            time_new STRING,
+            original_kwh DOUBLE,
+            corrected_kwh DOUBLE,
+            rolling_mean_kwh DOUBLE,
+            rolling_std_kwh DOUBLE,
+            reason STRING
         ) WITH (
             'connector' = 'kafka',
-            'topic' = 'features',
+            'topic' = 'data-quality',
             'properties.bootstrap.servers' = 'localhost:9092',
             'format' = 'json'
         )
     """)
 
+    statement_set = table_env.create_statement_set()
 
-    # Grouping by station_id, creating 15-minute tumbling windows, computing feature vector
-   
-    result = table_env.execute_sql("""
+    # Feature-vector output:
+    # 1. Compute rolling station statistics.
+    # 2. Flag readings more than 3 standard deviations from the rolling mean.
+    # 3. Replace anomalous kwh values with the rolling mean.
+    # 4. Build 15-minute station-level feature vectors.
+    # 5. Compute rate_of_change from the previous station window.
+    statement_set.add_insert_sql("""
         INSERT INTO features
+        WITH event_stats AS (
+            SELECT
+                station_id,
+                time_new,
+                event_time,
+                duration,
+                kwh,
+
+                AVG(kwh) OVER (
+                    PARTITION BY station_id
+                    ORDER BY event_time
+                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                ) AS rolling_mean_kwh,
+
+                STDDEV_POP(kwh) OVER (
+                    PARTITION BY station_id
+                    ORDER BY event_time
+                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                ) AS rolling_std_kwh
+
+            FROM ev_telemetry
+        ),
+
+        cleaned_events AS (
+            SELECT
+                station_id,
+                time_new,
+                event_time,
+                duration,
+                kwh AS original_kwh,
+                rolling_mean_kwh,
+                rolling_std_kwh,
+
+                CASE
+                    WHEN rolling_mean_kwh IS NOT NULL
+                         AND rolling_std_kwh IS NOT NULL
+                         AND rolling_std_kwh > 0
+                         AND ABS(kwh - rolling_mean_kwh) > 3 * rolling_std_kwh
+                    THEN 1
+                    ELSE 0
+                END AS anomaly_flag,
+
+                CASE
+                    WHEN rolling_mean_kwh IS NOT NULL
+                         AND rolling_std_kwh IS NOT NULL
+                         AND rolling_std_kwh > 0
+                         AND ABS(kwh - rolling_mean_kwh) > 3 * rolling_std_kwh
+                    THEN rolling_mean_kwh
+                    ELSE kwh
+                END AS corrected_kwh
+
+            FROM event_stats
+        ),
+
+        windowed_features AS (
+            SELECT
+                station_id,
+
+                TUMBLE_START(event_time, INTERVAL '15' MINUTE) AS window_start,
+
+                AVG(corrected_kwh) AS mean_kwh,
+
+                VAR_POP(corrected_kwh) AS variance_kwh,
+
+                AVG(corrected_kwh) / 15.0 AS capacity_utilization_ratio,
+
+                CAST(
+                    EXTRACT(
+                        HOUR FROM TUMBLE_START(event_time, INTERVAL '15' MINUTE)
+                    ) AS INT
+                ) AS hour_of_day,
+
+                MOD(
+                    DAYOFWEEK(TUMBLE_START(event_time, INTERVAL '15' MINUTE)) + 5,
+                    7
+                ) AS day_of_week,
+
+                MAX(anomaly_flag) AS anomaly_flag,
+
+                CAST(
+                    SUM(CASE WHEN original_kwh > 0 THEN 1 ELSE 0 END)
+                    AS DOUBLE
+                ) / COUNT(*) AS data_completeness
+
+            FROM cleaned_events
+
+            GROUP BY
+                station_id,
+                TUMBLE(event_time, INTERVAL '15' MINUTE)
+        ),
+
+        features_with_previous AS (
+            SELECT
+                station_id,
+                window_start,
+                mean_kwh,
+                variance_kwh,
+                capacity_utilization_ratio,
+                hour_of_day,
+                day_of_week,
+                anomaly_flag,
+                data_completeness,
+
+                LAG(mean_kwh, 1, mean_kwh) OVER (
+                    PARTITION BY station_id
+                    ORDER BY window_start
+                ) AS previous_mean_kwh
+
+            FROM windowed_features
+        )
+
         SELECT
             station_id,
 
-            DATE_FORMAT(
-                TUMBLE_START(event_time, INTERVAL '15' MINUTE),
-                'yyyy-MM-dd HH:mm:ss'
-            ) AS time_bin,
+            DATE_FORMAT(window_start, 'yyyy-MM-dd HH:mm:ss') AS time_bin,
 
-            AVG(kwh) AS mean_kwh,
+            mean_kwh,
 
-            VAR_POP(kwh) AS variance_kwh,
+            variance_kwh,
 
-            0.0 AS rate_of_change,
+            mean_kwh - previous_mean_kwh AS rate_of_change,
 
-            AVG(kwh) / 15.0 AS capacity_utilization_ratio,
+            capacity_utilization_ratio,
 
-            CAST(
-                EXTRACT(
-                    HOUR FROM TUMBLE_START(event_time, INTERVAL '15' MINUTE)
-                ) AS INT
-            ) AS hour_of_day,
+            hour_of_day,
 
-            MOD(
-                DAYOFWEEK(TUMBLE_START(event_time, INTERVAL '15' MINUTE)) + 5,
-                7
-            ) AS day_of_week,
+            day_of_week,
 
-            0 AS anomaly_flag,
+            anomaly_flag,
 
-            CAST(
-                SUM(CASE WHEN kwh > 0 THEN 1 ELSE 0 END)
-                AS DOUBLE
-            ) / COUNT(*) AS data_completeness
+            data_completeness
 
-        FROM ev_telemetry
-
-        GROUP BY
-            station_id,
-            TUMBLE(event_time, INTERVAL '15' MINUTE)
+        FROM features_with_previous
     """)
+
+    # Data-quality output:
+    # Publish only records that were flagged as anomalous.
+    statement_set.add_insert_sql("""
+        INSERT INTO data_quality
+        WITH event_stats AS (
+            SELECT
+                station_id,
+                time_new,
+                event_time,
+                kwh,
+
+                AVG(kwh) OVER (
+                    PARTITION BY station_id
+                    ORDER BY event_time
+                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                ) AS rolling_mean_kwh,
+
+                STDDEV_POP(kwh) OVER (
+                    PARTITION BY station_id
+                    ORDER BY event_time
+                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                ) AS rolling_std_kwh
+
+            FROM ev_telemetry
+        ),
+
+        cleaned_events AS (
+            SELECT
+                station_id,
+                time_new,
+                kwh AS original_kwh,
+                rolling_mean_kwh,
+                rolling_std_kwh,
+
+                CASE
+                    WHEN rolling_mean_kwh IS NOT NULL
+                         AND rolling_std_kwh IS NOT NULL
+                         AND rolling_std_kwh > 0
+                         AND ABS(kwh - rolling_mean_kwh) > 3 * rolling_std_kwh
+                    THEN rolling_mean_kwh
+                    ELSE kwh
+                END AS corrected_kwh,
+
+                CASE
+                    WHEN rolling_mean_kwh IS NOT NULL
+                         AND rolling_std_kwh IS NOT NULL
+                         AND rolling_std_kwh > 0
+                         AND ABS(kwh - rolling_mean_kwh) > 3 * rolling_std_kwh
+                    THEN 1
+                    ELSE 0
+                END AS anomaly_flag
+
+            FROM event_stats
+        )
+
+        SELECT
+            station_id,
+            time_new,
+            original_kwh,
+            corrected_kwh,
+            rolling_mean_kwh,
+            rolling_std_kwh,
+            'kwh value exceeded 3 standard deviations from station rolling mean' AS reason
+
+        FROM cleaned_events
+        WHERE anomaly_flag = 1
+    """)
+
+    result = statement_set.execute()
 
     print("Phase 2 feature engineering job started.")
     print("Reading from Kafka topic: ev-telemetry")
-    print("Writing feature vectors to Kafka topic, features")
+    print("Writing feature vectors to Kafka topic: features")
+    print("Writing anomalous records to Kafka topic: data-quality")
 
     result.wait()
 
