@@ -4,4 +4,5 @@ xgboost
 scikit-learn
 pandas
 numpy
-pickle5
+pickle5 # For those using Python 3.8 and above, you can comment this out
+kafka-python
