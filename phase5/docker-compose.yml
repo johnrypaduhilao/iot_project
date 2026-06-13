@@ -1,0 +1,200 @@
+# Phase 5 - unified docker-compose for the full EV Charging Load Forecasting
+# pipeline. Runs all five team phases on the same Docker network so the
+# dashboard, FastAPI, Postgres and Kafka talk to each other by service name.
+#
+# Usage:
+#   docker compose -f phase5/docker-compose.yml up --build
+#
+# Dashboard:  http://localhost:8501
+# FastAPI:    http://localhost:8000/docs
+# Postgres:   localhost:5432  (user evuser / pass evpass / db evdb)
+# Kafka:      localhost:9092  (PLAINTEXT, host listener)
+
+services:
+  # ---------------------------------------------------------------------
+  # Kafka (KRaft, single broker) - dual listeners so host tooling can also
+  # talk to it on localhost:9092 while internal services use kafka:9093.
+  # ---------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: ev-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # INTERNAL listener (29092) is used by containers inside the compose
+      # network. EXTERNAL listener (9092) is exposed to the host machine.
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # PostgreSQL + TimescaleDB (Phase 4 backing store)
+  # ---------------------------------------------------------------------
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: ev-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: evdb
+      POSTGRES_USER: evuser
+      POSTGRES_PASSWORD: evpass
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evuser -d evdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 4 schema bootstrap (runs once, exits 0)
+  # ---------------------------------------------------------------------
+  db-init:
+    build:
+      context: ../phase4
+    container_name: ev-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-u", "init_db.py"]
+    restart: "no"
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 1 - LOA producer (mounts the dataset volume read-only)
+  # ---------------------------------------------------------------------
+  phase1-producer:
+    build:
+      context: ../phase1
+    container_name: ev-phase1-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      CSV_PATH: /datasets/LOA-5min/LOA.csv
+      REPLAY_SPEED: "300"
+      # uncomment for a faster smoke test:
+      # MAX_STATIONS: "10"
+      # MAX_ROWS: "500000"
+    volumes:
+      - ../datasets:/datasets:ro
+    restart: on-failure
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 2 - PyFlink feature engineering
+  # ---------------------------------------------------------------------
+  phase2-flink:
+    build:
+      context: ../phase2
+    container_name: ev-phase2-flink
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 3 - XGBoost + FastAPI inference service
+  # ---------------------------------------------------------------------
+  phase3-fastapi:
+    build:
+      context: ../phase3
+    container_name: ev-phase3-fastapi
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../datasets:/datasets:ro
+      - phase3_models:/models
+    environment:
+      MODEL_PATH: /models/xgboost_model.pkl
+    restart: on-failure
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 4 - PostgreSQL sink + alerting
+  # ---------------------------------------------------------------------
+  phase4-service:
+    build:
+      context: ../phase4
+    container_name: ev-phase4-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: ["python", "-u", "phase4_service.py"]
+    restart: on-failure
+    networks: [evnet]
+
+  phase4-grid-stress:
+    build:
+      context: ../phase4
+    container_name: ev-phase4-grid-stress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: ["python", "-u", "grid_stress_job.py"]
+    restart: on-failure
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
+  # Phase 5 - Streamlit live dashboard
+  # ---------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+    container_name: ev-dashboard
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: evdb
+      DB_USER: evuser
+      DB_PASSWORD: evpass
+      REFRESH_SECONDS: "6"
+    restart: on-failure
+    networks: [evnet]
+
+networks:
+  evnet:
+    driver: bridge
+
+volumes:
+  kafka_data:
+  pg_data:
+  phase3_models:

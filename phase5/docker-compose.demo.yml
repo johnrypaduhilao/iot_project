@@ -1,0 +1,23 @@
+# Demo-recording overrides - apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build kafka postgres db-init phase2-flink phase3-fastapi phase4-service phase4-grid-stress dashboard
+#   (start phase1-producer LAST, while recording)
+#
+# Replays a small slice of the dataset (LOA_demo.csv, 4 stations x 500 rows)
+# at REPLAY_SPEED=1500 (~100 seconds total) so the live dashboard fills up
+# progressively on camera, including a real "Avg E2E Latency" reading.
+#
+# Run `docker compose -f docker-compose.yml -f docker-compose.demo.yml down -v`
+# first so Kafka/Postgres start from a clean state - otherwise this slice's
+# January 2023 timestamps will be treated as late data by Flink's watermark.
+
+services:
+  phase1-producer:
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      CSV_PATH: /datasets/LOA-5min/LOA_demo.csv
+      REPLAY_SPEED: "1500"
+
+  phase3-fastapi:
+    environment:
+      MODEL_PATH: /models/xgboost_model_demo.pkl
+      TRAIN_NROWS: "300000"
