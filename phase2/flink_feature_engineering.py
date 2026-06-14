@@ -107,13 +107,13 @@ def main():
                 AVG(kwh) OVER (
                     PARTITION BY station_id
                     ORDER BY event_time
-                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                    ROWS BETWEEN 30 PRECEDING AND CURRENT ROW
                 ) AS rolling_mean_kwh,
 
                 STDDEV_POP(kwh) OVER (
                     PARTITION BY station_id
                     ORDER BY event_time
-                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                    ROWS BETWEEN 30 PRECEDING AND CURRENT ROW
                 ) AS rolling_std_kwh
 
             FROM ev_telemetry
@@ -187,24 +187,30 @@ def main():
                 TUMBLE(event_time, INTERVAL '15' MINUTE)
         ),
 
+        -- LAG() OVER (ORDER BY window_start) doesn't work here: window_start
+        -- is a plain TIMESTAMP (not a rowtime), and Flink's streaming planner
+        -- can't build the OVER frame for it ("OVER RANGE FOLLOWING windows
+        -- are not supported yet"). A self-join on station_id + 15-minute
+        -- offset gives the same "previous window" value without needing
+        -- rowtime ordering.
         features_with_previous AS (
             SELECT
-                station_id,
-                window_start,
-                mean_kwh,
-                variance_kwh,
-                capacity_utilization_ratio,
-                hour_of_day,
-                day_of_week,
-                anomaly_flag,
-                data_completeness,
+                curr.station_id,
+                curr.window_start,
+                curr.mean_kwh,
+                curr.variance_kwh,
+                curr.capacity_utilization_ratio,
+                curr.hour_of_day,
+                curr.day_of_week,
+                curr.anomaly_flag,
+                curr.data_completeness,
 
-                LAG(mean_kwh, 1, mean_kwh) OVER (
-                    PARTITION BY station_id
-                    ORDER BY window_start
-                ) AS previous_mean_kwh
+                COALESCE(prv.mean_kwh, curr.mean_kwh) AS previous_mean_kwh
 
-            FROM windowed_features
+            FROM windowed_features curr
+            LEFT JOIN windowed_features prv
+                ON prv.station_id = curr.station_id
+               AND prv.window_start = curr.window_start - INTERVAL '15' MINUTE
         )
 
         SELECT
@@ -245,13 +251,13 @@ def main():
                 AVG(kwh) OVER (
                     PARTITION BY station_id
                     ORDER BY event_time
-                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                    ROWS BETWEEN 30 PRECEDING AND CURRENT ROW
                 ) AS rolling_mean_kwh,
 
                 STDDEV_POP(kwh) OVER (
                     PARTITION BY station_id
                     ORDER BY event_time
-                    ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
+                    ROWS BETWEEN 30 PRECEDING AND CURRENT ROW
                 ) AS rolling_std_kwh
 
             FROM ev_telemetry
