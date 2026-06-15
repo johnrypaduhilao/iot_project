@@ -14,7 +14,11 @@ RUN sed -i '/pickle5/d' requirements.txt \
 
 COPY app.py train_model.py peak_demand_alert.py ./
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Strip CRLF line endings (entrypoint.sh may be checked out with CRLF on
+# Windows) so the "#!/usr/bin/env bash" shebang resolves inside the
+# Linux container.
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
 # Re-target Kafka bootstrap and dataset path for the container network, and
 # make the training row cap configurable via TRAIN_NROWS (defaults to the

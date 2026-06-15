@@ -45,6 +45,33 @@ services:
     networks: [evnet]
 
   # ---------------------------------------------------------------------
+  # One-shot topic setup. Explicitly creates all topics before any
+  # producer/consumer starts so:
+  #  - Flink's AdminClient-based source doesn't crash-loop on a topic
+  #    that doesn't exist yet on a fresh broker
+  #  - `features` is created with cleanup.policy=compact, required by
+  #    Phase 2's upsert-kafka sink (PRIMARY KEY station_id, time_bin)
+  # ---------------------------------------------------------------------
+  kafka-init:
+    image: apache/kafka:3.8.0
+    container_name: ev-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic ev-telemetry --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic features --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic dynamic-prices --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic alerts --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic data-quality --partitions 1 --replication-factor 1
+        echo "All topics created."
+    restart: "no"
+    networks: [evnet]
+
+  # ---------------------------------------------------------------------
   # PostgreSQL + TimescaleDB (Phase 4 backing store)
   # ---------------------------------------------------------------------
   postgres:
@@ -87,8 +114,8 @@ services:
       context: ../phase1
     container_name: ev-phase1-producer
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP: kafka:29092
       CSV_PATH: /datasets/LOA-5min/LOA.csv
@@ -109,8 +136,8 @@ services:
       context: ../phase2
     container_name: ev-phase2-flink
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: on-failure
     networks: [evnet]
 
@@ -122,8 +149,8 @@ services:
       context: ../phase3
     container_name: ev-phase3-fastapi
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -142,8 +169,8 @@ services:
       context: ../phase4
     container_name: ev-phase4-service
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       db-init:
