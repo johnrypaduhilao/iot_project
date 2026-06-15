@@ -132,17 +132,25 @@ production latency).
 
 ## Known issues found during integration testing
 
-While wiring up the full stack end-to-end, we hit two issues worth
+While wiring up the full stack end-to-end, we hit a few issues worth
 flagging to the rest of the team:
 
 - **Phase 1 producer can OOM on the full dataset.** `phase1/producer.py`
-  loads the entire CSV into memory (`pd.read_csv(..., low_memory=False)`)
-  before replaying it. On the full `LOA.csv` (2.27 GB, ~53.8M rows) this
-  hangs/OOMs the container. Workaround used during testing: point
-  `CSV_PATH` at a smaller pre-sliced CSV. Also, `MAX_STATIONS` /
-  `MAX_ROWS` are documented but not actually read from the environment by
-  the producer. Both should be fixed in Phase 1 (chunked reading would
-  solve the memory issue).
+  used to load the entire CSV into memory before replaying it, which
+  hung/OOMed the container on the full `LOA.csv` (2.27 GB, ~53.8M rows).
+  This has since been fixed upstream: the producer now streams the CSV
+  in chunks and feeds per-station queues from a thread pool, and
+  `MAX_STATIONS` / `MAX_ROWS` are read from the environment (both can be
+  set on `phase1-producer` in this compose file to cap a test run).
+- **`features` topic must be compacted.** Phase 2's `features` sink now
+  uses the `upsert-kafka` connector (`PRIMARY KEY (station_id,
+  time_bin)`) so that `rate_of_change` can look up the previous window.
+  upsert-kafka requires `cleanup.policy=compact` on the target topic.
+  This compose file handles it via the `kafka-init` service, which
+  explicitly creates all five topics (with `features` set to `compact`)
+  before any producer/consumer starts. This also fixes the old Flink
+  AdminClient crash-loop on a fresh broker, since the topics now exist
+  before Phase 2 subscribes to `ev-telemetry`.
 - **Flink watermark drops "late" data on re-runs.** All timestamps in the
   LOA dataset fall within January 2023. Once Phase 2's event-time
   watermark has advanced past a given point (from any prior run), any
