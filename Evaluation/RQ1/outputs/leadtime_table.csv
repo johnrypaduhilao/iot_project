@@ -1,0 +1,5 @@
+detector,mean_lead_min,detection_rate,false_alarm_rate
+AGG-FORECAST,41.35,1.0,0.037
+AGG-CURRENT,40.03,1.0,0.039
+IND-FORECAST,37.14,0.938,0.037
+IND-CURRENT,7.7,0.077,0.037

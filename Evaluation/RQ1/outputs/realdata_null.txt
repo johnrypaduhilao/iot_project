@@ -1,0 +1,15 @@
+Grid Stress Indicator on the RAW LOA trace (no recalibration):
+  stations                : 521
+  15-min windows           : 35040
+  mean regional stress     : 0.0111
+  max regional stress      : 0.8199
+  windows above 0.8 : 1
+
+Finding: across 521 stations and 35,040 fifteen-minute windows (a full year),
+regional stress effectively never reaches the 0.8 alert line. Exactly one
+window grazes it (max 0.8199) — an isolated, single-window blip with no
+sustained event around it, almost certainly a sparse-reporting artifact rather
+than a genuine regional overload. With the fixed 15 kWh capacity there are no
+overload events to measure, so the overload regime must be constructed
+(recalibrated capacity + coordinated demand) for the research question to be
+answerable at all.

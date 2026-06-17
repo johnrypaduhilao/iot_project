@@ -1,0 +1,5 @@
+detector,precision,recall,f1,false_alarm_rate,mean_lead_min,detection_rate
+AGG-FORECAST,0.265,1.0,0.412,0.037,41.35,1.0
+AGG-CURRENT,0.264,1.0,0.411,0.039,40.03,1.0
+IND-FORECAST,0.299,0.873,0.437,0.037,37.14,0.938
+IND-CURRENT,0.0,0.0,0.0,0.037,7.7,0.077
