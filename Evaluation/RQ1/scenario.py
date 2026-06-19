@@ -1,20 +1,15 @@
 """
 Scenario generator.
 
-Builds a multi-station regional load trace whose daily shape is taken from the
-real LOA data, then layers on the two phenomena that matter for the research
-question:
+Builds a multi-station regional load trace whose daily shape comes from the
+real LOA data, then layers on two patterns:
 
-  1. Coordinated regional events  -- many stations rise together but each stays
-     below its own critical line; the REGION exceeds capacity. This is the case
-     aggregation is meant to catch and isolated per-station monitoring misses.
-  2. Localised spikes             -- one station briefly overloads while the
-     region stays healthy. Not a regional overload; it exists to expose false
-     regional alarms from an any-station rule.
+  1. Coordinated regional events - many stations rise together, region exceeds
+     capacity, no single station looks critical.
+  2. Localised spikes - one station overloads alone; region stays healthy.
+     Used to check for false regional alarms.
 
-Everything is realised (observed) load. The forecaster and detectors are built
-on top of this in the other modules; the ground-truth label is computed here
-from the realised regional total only.
+Ground truth label is computed here from realised regional load only.
 """
 
 import numpy as np
@@ -24,12 +19,8 @@ import config
 
 
 def diurnal_shape(csv_path) -> np.ndarray:
-    """Return a length-24 normalised hour-of-day load shape from real LOA data.
-
-    Lightly smoothed so the synthetic baseline follows the genuine demand
-    rhythm rather than an invented curve. Falls back to a flat shape if the
-    file is missing.
-    """
+    """Length-24 normalised hour-of-day load shape from real LOA data.
+    Falls back to a flat shape if the file is missing."""
     try:
         df = pd.read_csv(csv_path)
     except FileNotFoundError:
@@ -58,12 +49,9 @@ def generate_scenario(n_stations: int, rho: float, seed: int,
                       participation: float = None) -> dict:
     """Generate one regional scenario.
 
-    `participation` is the fraction of stations that join each coordinated
-    event. At 1.0 (the default) an overload is fully distributed -- every
-    station rises to a sub-critical level. As it drops, the same regional
-    overload is carried by fewer stations, so each participating station must
-    run hotter (target scaled by 1/participation), which is the concentrated
-    regime where an any-station rule can catch the overload directly.
+    `participation` is the fraction of stations joining each coordinated
+    event (1.0 = fully distributed; lower = same overload carried by fewer,
+    hotter-running stations).
 
     Returns a dict with:
       cur        (T, n) realised capacity-utilisation ratio per station/window
@@ -84,8 +72,7 @@ def generate_scenario(n_stations: int, rho: float, seed: int,
     capacity = rng.choice(config.STATION_SIZES, size=n_stations)
     base_level = rng.uniform(*config.BASE_LEVEL_RANGE, size=n_stations)
 
-    # Correlated baseline: a shared regional factor plus idiosyncratic noise,
-    # kept small so noise alone never creates a regional overload.
+    # Shared regional factor plus idiosyncratic noise per station
     common = _ar1(T, config.NOISE_AR, config.NOISE_SD, rng)
     cur = np.zeros((T, n_stations))
     for i in range(n_stations):
@@ -93,10 +80,8 @@ def generate_scenario(n_stations: int, rho: float, seed: int,
         factor = 1.0 + rho * common + (1.0 - rho) * idio
         cur[:, i] = base_level[i] * shape_t * np.clip(factor, 0.0, None)
 
-    # Coordinated regional events: ramp participating stations toward a tight
-    # sub-critical target band (~0.80-0.90). The region becomes stressed (no
-    # headroom) while no single station looks individually critical -- the case
-    # an any-station rule is structurally blind to.
+    # Coordinated regional events: ramp participating stations toward a
+    # sub-critical target band (~0.80-0.90).
     event_window = np.zeros(T, dtype=bool)
     p = config.EVENT_PARTICIPATION if participation is None else participation
     for d in range(config.N_DAYS):
@@ -106,7 +91,6 @@ def generate_scenario(n_stations: int, rho: float, seed: int,
             peak_w = d * config.WINDOWS_PER_DAY + start_hour * (config.WINDOWS_PER_DAY // 24)
             peak_w = min(peak_w, T - 1)
             ramp = config.EVENT_RAMP_WINDOWS
-            # Same regional overload spread over fewer stations -> hotter each.
             target = rng.uniform(*config.EVENT_TARGET_BAND, size=n_stations) / p
             target = np.clip(target, 0.0, config.EVENT_CUR_CAP)
             joining = rng.random(n_stations) < p
@@ -118,16 +102,14 @@ def generate_scenario(n_stations: int, rho: float, seed: int,
                     cur[w, joining] = lifted[joining]
                     event_window[w] = True
 
-    # Normal single-station busy-ness: frequent independent bursts that lift one
-    # station high without stressing the region. Suppressed inside coordinated
-    # events so isolation can't catch a distributed event by coincidence.
+    # Independent single-station bursts, suppressed during coordinated events
     burst = (rng.random((T, n_stations)) < config.LOCAL_BURST_PROB) & ~event_window[:, None]
     burst_add = rng.uniform(*config.LOCAL_BURST_ADD_RANGE, size=(T, n_stations))
     cur += burst * burst_add
 
     cur = np.clip(cur, 0.0, None)
 
-    # Realised regional utilisation and the physical ground-truth label.
+    # Realised regional utilisation and ground-truth label
     load = cur * capacity                       # (T, n) kWh per 15 min
     region_u = load.sum(axis=1) / capacity.sum()
     overload = region_u >= config.L_TRUE

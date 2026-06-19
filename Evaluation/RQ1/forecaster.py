@@ -1,15 +1,10 @@
 """
 One-window-ahead load forecaster.
 
-This is the system's own forecaster, reproduced from phase3/train_model.py:
-the same eight features, the same target (next window's mean_kwh), the same
-chronological 80/20 split with no shuffle, and the same XGBoost hyper-parameters.
-We train it on each scenario's own history so the "forecast" detectors use a
-genuine prediction rather than an oracle.
-
-It returns, per station and window, the CUR predicted for that window using only
-information available one window earlier -- i.e. a real 15-minute information
-lead, which is exactly the forecasting advantage the 2x2 is meant to isolate.
+Reproduces phase3/train_model.py: same 8 features, same target (next
+window's mean_kwh), same chronological 80/20 split, same XGBoost
+hyperparameters. Trained fresh on each scenario's own history so the
+"forecast" detectors use a real prediction, not an oracle.
 """
 
 import numpy as np
@@ -46,8 +41,7 @@ def forecast_cur(scn: dict) -> np.ndarray:
     feats, mean_kwh = _features(scn)
     T, n, _ = feats.shape
 
-    # Pooled training rows: features of window t -> mean_kwh of window t+1,
-    # using only the first TRAIN_FRACTION of windows (no leakage, no shuffle).
+    # Pooled training rows: features of window t -> mean_kwh of window t+1
     split = int(T * config.TRAIN_FRACTION)
     X_rows, y_rows = [], []
     for t in range(split - 1):

@@ -47,12 +47,9 @@ def real_data_null():
         f"  windows above {config.GRID_THRESHOLD} : {(grid > config.GRID_THRESHOLD).sum()}",
         "",
         "Finding: across 521 stations and 35,040 fifteen-minute windows (a full year),",
-        "regional stress effectively never reaches the 0.8 alert line. Exactly one window",
-        "grazes it (max 0.8199) \u2014 an isolated single-window blip, almost certainly a",
-        "sparse-reporting artifact rather than a genuine regional overload. With the fixed",
-        "15 kWh capacity there are no overload events to measure, so the overload regime",
-        "must be constructed (recalibrated capacity + coordinated demand) for the research",
-        "question to be answerable at all.",
+        "regional stress never reaches the 0.8 alert line (max 0.8199, a single-window blip).",
+        "With the fixed 15 kWh capacity there are no overload events to measure, so the",
+        "overload regime is constructed for the research question below.",
     ]
     return "\n".join(lines)
 
@@ -65,8 +62,7 @@ def run_main():
     nthr = len(config.THRESHOLDS)
 
     # accumulate per-threshold curves and per-seed operating-point metrics
-    far_curve = {d: np.zeros(nthr) for d in DETECTORS}
-    lead_curve = {d: np.zeros(nthr) for d in DETECTORS}
+    far_curve = {d: np.zeieros(nthr) for d in DETECTORS}
     roc_curve = {d: np.zeros((nthr, 2)) for d in DETECTORS}
     op_metrics = {d: [] for d in DETECTORS}
 
@@ -141,13 +137,8 @@ def run_main():
 
 
 def run_nsweep():
-    """How the aggregate vs isolation gap scales with region size.
-
-    Compares the two REACTIVE detectors (current-window, apples to apples) at a
-    fixed false-alarm budget. As the region grows, single-station busy-ness gets
-    more frequent, forcing isolation's threshold up so it misses more distributed
-    overloads, while the aggregate mean only gets more robust.
-    """
+    """Aggregate vs isolation recall as region size (station count) grows,
+    at a fixed false-alarm budget."""
     T = config.N_WINDOWS
     lo, hi = int(T * config.TRAIN_FRACTION), T
     seeds = 10
@@ -185,14 +176,8 @@ def run_nsweep():
 
 
 def run_coordination_sweep():
-    """How the aggregate vs isolation gap depends on how DISTRIBUTED stress is.
-
-    Sweeps event participation from fully distributed (every station rises a
-    little) to concentrated (a few stations carry the whole overload), holding
-    the regional overload magnitude fixed. Answers the obvious objection that
-    the result is rigged by assuming distributed stress: it shows exactly where
-    the advantage lives and where it disappears.
-    """
+    """Aggregate vs isolation recall as event participation goes from fully
+    distributed to concentrated, holding overload magnitude fixed."""
     T = config.N_WINDOWS
     lo, hi = int(T * config.TRAIN_FRACTION), T
     seeds = 12

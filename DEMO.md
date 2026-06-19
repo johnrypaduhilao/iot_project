@@ -24,6 +24,10 @@ LOA.csv → [Phase 1] Kafka Producer
          [Phase 5] Streamlit Dashboard  ←  also reads alerts topic live
 ```
 
+
+DOWN LOCAL POSTGRES: Stop-Service -Name "postgresql-x64-15"
+
+
 ---
 
 ## Pre-Demo Checklist (do before entering the room)
@@ -158,6 +162,10 @@ docker exec -it postgres psql -U evuser -d evdb -c \
 
 > **Speaker notes:** "Grid stress is a regional aggregate — it averages CUR across all active stations every 15 minutes. If that average exceeds 80%, a regional alert fires to the `alerts` Kafka topic, which you can see reflected in the dashboard feed."
 
+original_kwh vs corrected_kwh — what the raw sensor sent vs. what was used
+reason — why it was flagged (e.g. "negative value", "spike detected")
+raw_payload — the full original JSON message, stored as JSONB for debugging
+
 ---
 
 ## Step 6 — Show Kafka Topics
@@ -165,7 +173,7 @@ docker exec -it postgres psql -U evuser -d evdb -c \
 > **Speaker notes:** "Five Kafka topics wire everything together. Let me show them."
 
 ```bash
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+$ docker exec ev-kafka //opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
 Expected output:
@@ -191,6 +199,26 @@ Key numbers to call out:
 - **Accuracy degrades:** 34% at 30 min, 59% at 45 min → 15 min is the optimal alert window
 - **Grid stress threshold:** 80% regional CUR → regional alert
 - **Dataset:** ~53.8M rows, Jan 2023, Ontario EVSE network
+
+---
+
+## Quick Reset (between rehearsal runs — no full teardown)
+
+> **Use this instead of `down -v`** when you just want to re-run the demo data without restarting Kafka, Postgres, FastAPI, or the dashboard.
+
+Two things actually need resetting between runs: the Postgres rows, and Flink's in-memory watermark (the cause of the "late data silently dropped" issue — see Troubleshooting below).
+
+```bash
+# 1. Clear out previous demo run's rows
+docker exec ev-postgres psql -U evuser -d evdb -c "TRUNCATE inference_results, grid_stress, data_quality_events RESTART IDENTITY;"
+
+# 2. Restart just the Flink container to reset its watermark
+docker compose -f phase5/docker-compose.yml restart phase2-flink
+```
+
+Everything else stays up. Once `phase2-flink` is back (check `docker logs -f ev-phase2-flink` for the consumer to reattach), re-run the producer (Step 4) for another take.
+
+> Leftover messages from the previous run sitting in `dynamic-prices`/`alerts`/`features` are harmless — each consumer group has already advanced past them, so they won't be reprocessed or show up again on the dashboard.
 
 ---
 

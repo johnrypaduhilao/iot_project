@@ -1,21 +1,16 @@
 """
 Detectors and metrics.
 
-Four detectors, all thresholding a per-window statistic of the per-station CUR:
+Four detectors, each thresholding a per-window statistic of per-station CUR:
 
     AGG-CURRENT   mean_i CUR_observed_i(t)   > theta
     AGG-FORECAST  mean_i CUR_forecast_i(t)   > theta
     IND-CURRENT   max_i  CUR_observed_i(t)   > phi
     IND-FORECAST  max_i  CUR_forecast_i(t)   > phi
 
-Crossing {current, forecast} x {mean, max} isolates how much earliness comes
-from forecasting versus from spatial aggregation.
-
-Early-warning scoring separates two things a plain confusion matrix conflates:
-an alarm fired in the run-up to a real overload is a *timely warning*, not a
-false alarm. We define a warning zone of [onset - lookback, event end] around
-each true event; alarms inside it score as warnings (with a lead time), alarms
-outside any zone score as false alarms.
+An alarm inside the warning zone before a true event counts as a timely
+warning (with a lead time), not a false alarm; alarms outside any zone count
+as false alarms.
 """
 
 import numpy as np
@@ -78,7 +73,7 @@ def evaluate_detector(stat: np.ndarray, overload: np.ndarray, threshold: float,
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     fpr = fp / (fp + tn) if fp + tn else 0.0
 
-    # Early-warning view: false alarms only outside warning zones.
+    # False alarms outside any warning zone
     outside = ~zone
     outside[:lo] = False
     far = float(np.sum(alarm & outside) / np.sum(outside)) if np.sum(outside) else 0.0
@@ -113,8 +108,7 @@ def roc_points(stat: np.ndarray, overload: np.ndarray, lo: int, hi: int):
 
 
 def operating_points(stat: np.ndarray, overload: np.ndarray, lo: int, hi: int):
-    """(false_alarm_rate, mean_lead_minutes) pairs -- the joint earliness vs
-    false-alarm trade-off curve that answers 'earlier AND more accurate'."""
+    """(false_alarm_rate, mean_lead_minutes) pairs across the threshold sweep."""
     pts = []
     for thr in config.THRESHOLDS:
         m = evaluate_detector(stat, overload, thr, lo, hi)
@@ -123,8 +117,7 @@ def operating_points(stat: np.ndarray, overload: np.ndarray, lo: int, hi: int):
 
 
 def pick_threshold_for_far(stat, overload, lo, hi, far_budget: float) -> float:
-    """Lowest threshold whose false-alarm rate is within the budget -- i.e. the
-    most sensitive setting that still respects the operator's false-alarm cap."""
+    """Lowest threshold whose false-alarm rate is within the budget."""
     best = config.THRESHOLDS[-1]
     for thr in config.THRESHOLDS:
         m = evaluate_detector(stat, overload, thr, lo, hi)
