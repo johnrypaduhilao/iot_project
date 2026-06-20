@@ -1,37 +1,35 @@
 import psycopg2
 
-# PostgreSQL / TimescaleDB connection settings
 DB_HOST = "localhost"
-DB_PORT = 5432
+DB_PORT = 5900
 DB_NAME = "evdb"
 DB_USER = "evuser"
 DB_PASSWORD = "evpass"
 
 def main():
     conn = psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT,
+        dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
     )
     conn.autocommit = True
     cur = conn.cursor()
 
-    # Table 1: inference_results
     cur.execute("""
         CREATE TABLE IF NOT EXISTS inference_results (
-            id              SERIAL PRIMARY KEY,
-            station_id      VARCHAR(20),
-            time_bin        TIMESTAMP,
-            predicted_kwh   FLOAT,
-            price_multiplier FLOAT,
-            alert_level     VARCHAR(10),
-            created_at      TIMESTAMP DEFAULT NOW()
+            id                   SERIAL PRIMARY KEY,
+            station_id           VARCHAR(20),
+            time_bin             TIMESTAMP,
+            predicted_kwh        FLOAT,
+            price_multiplier     FLOAT,
+            dynamic_price_cad    FLOAT,
+            guaranteed_price_cad FLOAT,
+            day_ahead_price_cad  FLOAT,
+            session_status       VARCHAR(20),
+            alert_level          VARCHAR(10),
+            created_at           TIMESTAMP DEFAULT NOW()
         );
     """)
 
-    # Table 2: grid_stress
     cur.execute("""
         CREATE TABLE IF NOT EXISTS grid_stress (
             id              SERIAL PRIMARY KEY,
@@ -43,7 +41,6 @@ def main():
         );
     """)
 
-    # Table 3: data_quality_events
     cur.execute("""
         CREATE TABLE IF NOT EXISTS data_quality_events (
             id              SERIAL PRIMARY KEY,
@@ -56,9 +53,8 @@ def main():
             created_at      TIMESTAMP DEFAULT NOW()
         );
     """)
-    
-    print("Tables created (or already exist).")
 
+    print("Tables created successfully.")
     cur.close()
     conn.close()
 

@@ -7,7 +7,7 @@ from confluent_kafka import Producer
 
 # ---------- PostgreSQL / TimescaleDB settings ----------
 DB_HOST = "localhost"
-DB_PORT = 5432
+DB_PORT = 5900
 DB_NAME = "evdb"
 DB_USER = "evuser"
 DB_PASSWORD = "evpass"
