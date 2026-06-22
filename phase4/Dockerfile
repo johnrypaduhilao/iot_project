@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir \
 COPY phase4_service.py grid_stress_job.py init_db.py ./
 
 # Re-target hardcoded localhost references for the container network.
+# DB_PORT is reset to 5432 (Postgres's actual in-container listening port);
+# the source files hardcode 5900 to match a teammate's local host-port
+# remap (5900:5432), which doesn't apply to the Phase 5 compose network.
 RUN sed -i 's|"localhost"|"postgres"|g' phase4_service.py grid_stress_job.py init_db.py \
-    && sed -i 's|localhost:9092|kafka:29092|g' phase4_service.py grid_stress_job.py
+    && sed -i 's|localhost:9092|kafka:29092|g' phase4_service.py grid_stress_job.py \
+    && sed -i 's|DB_PORT = 5900|DB_PORT = 5432|g' phase4_service.py grid_stress_job.py init_db.py
 
 ENV PYTHONUNBUFFERED=1
 

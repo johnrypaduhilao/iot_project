@@ -183,13 +183,18 @@ def kafka_consumer_loop():
         INPUT_TOPIC,
         bootstrap_servers=KAFKA_BROKER,
         group_id=GROUP_ID,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m is not None else None,
         auto_offset_reset="latest",
         enable_auto_commit=True,
     )
     for message in consumer:
         try:
             features = message.value
+            if features is None:
+                # Tombstone/retraction record from the compacted upsert-kafka
+                # "features" topic (Phase 2's self-join can retract a previous
+                # row before re-emitting it) — nothing to infer on, skip it.
+                continue
             result = run_inference(features)
             producer.send(OUTPUT_TOPIC, value=result)
             print(

@@ -230,7 +230,8 @@ live_df = pd.DataFrame(prices_buffer) if prices_buffer else pd.DataFrame()
 # Historical data from Postgres (last 4 hours, capped at HEATMAP_WINDOWS bins)
 hist_df = query_df(
     """
-    SELECT station_id, time_bin, predicted_kwh, price_multiplier, alert_level
+    SELECT station_id, time_bin, predicted_kwh, price_multiplier, alert_level,
+           guaranteed_price_cad, day_ahead_price_cad
     FROM inference_results
     WHERE created_at >= NOW() - INTERVAL '12 hours'
     ORDER BY time_bin DESC
@@ -412,13 +413,24 @@ else:
     st.subheader("Current Station Status")
     display_cols = [
         c
-        for c in ["station_id", "time_bin", "predicted_kwh", "price_multiplier", "alert_level"]
+        for c in [
+            "station_id", "time_bin", "predicted_kwh", "price_multiplier",
+            "guaranteed_price_cad", "day_ahead_price_cad", "alert_level",
+        ]
         if c in latest_df.columns
     ]
     st.dataframe(
         latest_df[display_cols].sort_values("station_id"),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "guaranteed_price_cad": st.column_config.NumberColumn(
+                "Guaranteed Price (CAD)", help="Locked-in price for the current session", format="$%.4f"
+            ),
+            "day_ahead_price_cad": st.column_config.NumberColumn(
+                "Day-Ahead Price (CAD)", help="Estimated price for tomorrow, same station/hour/weekday", format="$%.4f"
+            ),
+        },
     )
 
 
