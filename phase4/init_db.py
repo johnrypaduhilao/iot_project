@@ -30,6 +30,14 @@ def main():
         );
     """)
 
+    # Migrate existing tables that predate the price columns
+    for col, ctype in [
+        ("dynamic_price_cad",    "FLOAT"),
+        ("guaranteed_price_cad", "FLOAT"),
+        ("day_ahead_price_cad",  "FLOAT"),
+    ]:
+        cur.execute(f"ALTER TABLE inference_results ADD COLUMN IF NOT EXISTS {col} {ctype};")
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS grid_stress (
             id              SERIAL PRIMARY KEY,

@@ -42,8 +42,15 @@ The file is large and is excluded from the repository.
 
 ## Running the Full Pipeline
 
-The recommended way to run everything is through Phase 5's unified Docker Compose, which wires all services onto one network. See `phase5/README.md` for the single-command setup.
+The recommended way to run everything is through Phase 5's unified Docker Compose, which wires all services onto one network:
 
+```bash
+docker compose -f phase5/docker-compose.yml up --build
+```
+
+See `phase5/README.md` for more details.
+
+## Running the Pipeline Step-by-Step
 If you want to run phases individually (e.g. for development), use the six-terminal sequence below.
 
 ### Step 1 — Infrastructure
