@@ -4,7 +4,6 @@ from pyflink.table import EnvironmentSettings, StreamTableEnvironment
 
 
 def main():
-    # Creating Flink environment
     flink_env = StreamExecutionEnvironment.get_execution_environment()
     flink_env.set_parallelism(1)
 
@@ -23,7 +22,6 @@ def main():
         f"file:///{kafka_jar_path.replace(os.sep, '/')}"
     )
 
-    # Reading raw telemetry from Phase 1 Kafka topic
     table_env.execute_sql("""
         CREATE TABLE ev_telemetry (
             station_id STRING,
@@ -44,8 +42,7 @@ def main():
         )
     """)
 
-    # Writing feature vectors to Kafka topic "features"
-    # upsert-kafka is used because rate_of_change uses previous-window logic.
+    # upsert-kafka is required because rate_of_change does a self-join on the previous window
     table_env.execute_sql("""
         CREATE TABLE features (
             station_id STRING,
@@ -68,7 +65,6 @@ def main():
         )
     """)
 
-    # Writing anomalous records to Kafka topic "data-quality"
     table_env.execute_sql("""
         CREATE TABLE data_quality (
             station_id STRING,
@@ -88,12 +84,6 @@ def main():
 
     statement_set = table_env.create_statement_set()
 
-    # Feature-vector output:
-    # 1. Compute rolling station statistics.
-    # 2. Flag readings more than 3 standard deviations from the rolling mean.
-    # 3. Replace anomalous kwh values with the rolling mean.
-    # 4. Build 15-minute station-level feature vectors.
-    # 5. Compute rate_of_change from the previous station window.
     statement_set.add_insert_sql("""
         INSERT INTO features
         WITH event_stats AS (
@@ -237,8 +227,6 @@ def main():
         FROM features_with_previous
     """)
 
-    # Data-quality output:
-    # Publish only records that were flagged as anomalous.
     statement_set.add_insert_sql("""
         INSERT INTO data_quality
         WITH event_stats AS (

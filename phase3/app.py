@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from kafka import KafkaConsumer, KafkaProducer
 from typing import Optional
 
-# ─── Config ───────────────────────────────────────────────────────────────────
+# Config
 KAFKA_BROKER = "localhost:9092"
 INPUT_TOPIC = "features"
 OUTPUT_TOPIC = "dynamic-prices"
@@ -16,14 +16,13 @@ BASE_PRICE_CAD = 0.12
 GUARANTEE_PREMIUM = 1.1         # Guaranteed price = dynamic price at plug-in × 1.1
 LOA_CSV_PATH = "../datasets/LOA-5min/LOA.csv"
 
-# ─── Load XGBoost model ───────────────────────────────────────────────────────
+# Load model
 with open("xgboost_model.pkl", "rb") as f:
     model = pickle.load(f)
 
-# ─── Pre-compute day-ahead prices from historical average ─────────────────────
-# Loads first 5M rows of LOA data at startup and builds a lookup table:
-# (station_id, hour_of_day, day_of_week) → historical average kWh
-# This is used as the "tomorrow's estimated price" shown to users before they plug in.
+# Day-ahead price lookup: (station_id, hour_of_day, day_of_week) → historical avg kWh.
+# Loaded at startup from the first 5M rows; used to show users an estimated
+# tomorrow's price before they plug in.
 print("Pre-computing day-ahead price lookup table from historical data...")
 _df = pd.read_csv(LOA_CSV_PATH, nrows=5000000)
 _df["time_new"] = pd.to_datetime(_df["time_new"])
@@ -46,13 +45,9 @@ DAY_AHEAD_LOOKUP = {
 print(f"Day-ahead lookup ready: {len(DAY_AHEAD_LOOKUP)} entries.")
 del _df, _hist  # free memory
 
-# ─── Session state (guaranteed price lock) ────────────────────────────────────
-# Tracks whether each station is currently active and what price was locked in.
-# Keyed by station_id.
-# Structure: {station_id: {"is_active": bool, "locked_price": float | None}}
+# Session state: {station_id: {"is_active": bool, "locked_price": float | None}}
 station_session_state: dict = {}
 
-# ─── Pydantic input schema ────────────────────────────────────────────────────
 class FeatureVector(BaseModel):
     station_id: str
     time_bin: str
@@ -65,7 +60,6 @@ class FeatureVector(BaseModel):
     anomaly_flag: int
     data_completeness: float
 
-# ─── Pricing helpers ──────────────────────────────────────────────────────────
 def compute_price_multiplier(cur: float) -> float:
     """
     CUR < 0.7  → 1.0x  (normal, standard price)
@@ -128,7 +122,6 @@ def compute_guaranteed_price(
         station_session_state[station_id] = {"is_active": False, "locked_price": None}
         return round(BASE_PRICE_CAD * GUARANTEE_PREMIUM, 4), "idle"
 
-# ─── Core inference ───────────────────────────────────────────────────────────
 FEATURE_COLS = [
     "mean_kwh", "variance_kwh", "rate_of_change",
     "capacity_utilization_ratio", "hour_of_day", "day_of_week",
@@ -166,11 +159,9 @@ def run_inference(features: dict) -> dict:
         "session_status": session_status,
         # Day-ahead pricing (historical average, shown to users before they plug in)
         "day_ahead_price_cad": day_ahead_price,
-        # Alert
         "alert_level": alert_level,
     }
 
-# ─── Kafka integration ────────────────────────────────────────────────────────
 def get_producer():
     return KafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
@@ -208,7 +199,6 @@ def kafka_consumer_loop():
         except Exception as e:
             print(f"Error processing message: {e}")
 
-# ─── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI()
 
 @app.on_event("startup")
